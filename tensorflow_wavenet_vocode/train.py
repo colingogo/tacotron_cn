@@ -1,56 +1,46 @@
-#!/usr/bin/python
-"""Training script for the WaveNet network on the VCTK corpus.
-
-This script trains a network with the WaveNet using data from the VCTK corpus,
-which can be freely downloaded at the following site (~10 GB):
-http://homepages.inf.ed.ac.uk/jyamagis/page3/page58/page58.html
-"""
-
-from __future__ import print_function
+# -*- coding: utf-8 -*-
 
 import argparse
-from datetime import datetime
-import json
 import os
 import sys
 import time
+from datetime import datetime
 
 import tensorflow as tf
-from tensorflow.python.client import timeline
 
-from wavenet import WaveNetModel, SkeletonReader, optimizer_factory
+from model import WaveNetModel, optimizer_factory
+from datasets.data_feeder import DataFeeder
+from hparams import hparams, hparams_debug_string
 
+
+# default parameters
 BATCH_SIZE = 1
-DATA_DIRECTORY = '/home/luna/ssp/data/single_original'
+TRAIN_TXT = "./train.txt"
 LOGDIR_ROOT = './logdir'
-CHECKPOINT_EVERY = 100
+CHECKPOINT_EVERY = 200
 NUM_STEPS = int(1e5)
 LEARNING_RATE = 1e-3
-WAVENET_PARAMS = './wavenet_params.json'
-STARTED_DATESTRING = "{0:%Y-%m-%dT%H-%M-%S}".format(datetime.now())
-SAMPLE_SIZE = 100
+STARTED_DATE_STRING = "{0:%Y-%m-%dT%H-%M-%S}".format(datetime.now())
+SAMPLE_SIZE = 20000
 L2_REGULARIZATION_STRENGTH = 0
 EPSILON = 0.001
 MOMENTUM = 0.9
+MAX_TO_KEEP = 5
+METADATA = False
+PRINT_LOSS_EVERY = 50
 
 
 def get_arguments():
-    def _str_to_bool(s):
-        """Convert string to bool (in argparse context)."""
-        if s.lower() not in ['true', 'false']:
-            raise ValueError('Argument needs to be a '
-                             'boolean, got {}'.format(s))
-        return {'true': True, 'false': False}[s.lower()]
 
     parser = argparse.ArgumentParser(description='WaveNet example network')
     parser.add_argument('--batch_size', type=int, default=BATCH_SIZE,
-                        help='How many wav files to process at once.')
-    parser.add_argument('--data_dir', type=str, default=DATA_DIRECTORY,
+                        help='How many wav files to process at once. Default: ' + str(BATCH_SIZE) + '.')
+    parser.add_argument('--train_txt', type=str, default=TRAIN_TXT,
                         help='The directory containing the VCTK corpus.')
-    parser.add_argument('--store_metadata', type=bool, default=False,
+    parser.add_argument('--store_metadata', type=bool, default=METADATA,
                         help='Whether to store advanced debugging information '
                         '(execution time, memory consumption) for use with '
-                        'TensorBoard.')
+                        'TensorBoard. Default: ' + str(METADATA) + '.')
     parser.add_argument('--logdir', type=str, default=None,
                         help='Directory in which to store the logging '
                         'information for TensorBoard. '
@@ -67,34 +57,35 @@ def get_arguments():
                         'This creates the new model under the dated directory '
                         'in --logdir_root. '
                         'Cannot use with --logdir.')
-    parser.add_argument('--checkpoint_every', type=int, default=CHECKPOINT_EVERY,
-                        help='How many steps to save each checkpoint after')
+    parser.add_argument('--checkpoint_every', type=int,
+                        default=CHECKPOINT_EVERY,
+                        help='How many steps to save each checkpoint after. Default: ' + str(CHECKPOINT_EVERY) + '.')
     parser.add_argument('--num_steps', type=int, default=NUM_STEPS,
-                        help='Number of training steps.')
+                        help='Number of training steps. Default: ' + str(NUM_STEPS) + '.')
     parser.add_argument('--learning_rate', type=float, default=LEARNING_RATE,
-                        help='Learning rate for training.')
-    parser.add_argument('--wavenet_params', type=str, default=WAVENET_PARAMS,
-                        help='JSON file with the network parameters.')
+                        help='Learning rate for training. Default: ' + str(LEARNING_RATE) + '.')
     parser.add_argument('--sample_size', type=int, default=SAMPLE_SIZE,
                         help='Concatenate and cut audio samples to this many '
-                        'samples.')
+                        'samples. Default: ' + str(SAMPLE_SIZE) + '.')
     parser.add_argument('--l2_regularization_strength', type=float,
                         default=L2_REGULARIZATION_STRENGTH,
                         help='Coefficient in the L2 regularization. '
-                        'Disabled by default')
+                        'Default: False')
     parser.add_argument('--optimizer', type=str, default='adam',
                         choices=optimizer_factory.keys(),
-                        help='Select the optimizer specified by this option.')
+                        help='Select the optimizer specified by this option. Default: adam.')
     parser.add_argument('--momentum', type=float,
                         default=MOMENTUM, help='Specify the momentum to be '
                         'used by sgd or rmsprop optimizer. Ignored by the '
-                        'adam optimizer.')
-    parser.add_argument('--epsilon', type=float,
-			default=1e-8, help='Specify the epsilon to be used by adam optimizer')
-    parser.add_argument('--histograms', type=_str_to_bool, default=False,
-                        help='Whether to store histogram summaries.')
-    parser.add_argument('--gc_channels', type=int, default=None,
-                        help='Number of global condition channels.')
+                        'adam optimizer. Default: ' + str(MOMENTUM) + '.')
+    parser.add_argument('--histograms', type=bool, default=False,
+                        help='Whether to store histogram summaries. Default: False')
+    parser.add_argument('--max_checkpoints', type=int, default=MAX_TO_KEEP,
+                        help='Maximum amount of checkpoints that will be kept alive. Default: '
+                             + str(MAX_TO_KEEP) + '.')
+    parser.add_argument('--num_gpus', type=int, default=4, help="the number of gpu")
+    parser.add_argument('--hparams', type=str, default=None, help="the hparams")
+    parser.add_argument('--speaker_id', type=int, default=None, help='the speaker id')
     return parser.parse_args()
 
 
@@ -125,14 +116,14 @@ def load(saver, sess, logdir):
         print("  Restoring...", end="")
         saver.restore(sess, ckpt.model_checkpoint_path)
         print(" Done.")
-        return global_step
+        return global_step, sess
     else:
         print(" No checkpoint found.")
-        return None
+        return None, sess
 
 
 def get_default_logdir(logdir_root):
-    logdir = os.path.join(logdir_root, 'train', STARTED_DATESTRING)
+    logdir = os.path.join(logdir_root, 'train', STARTED_DATE_STRING)
     return logdir
 
 
@@ -177,106 +168,169 @@ def validate_directories(args):
     }
 
 
+def average_gradients(tower_grads):
+    average_grads = []
+    for grad_and_vars in zip(*tower_grads):
+        grads = []
+        for g, _ in grad_and_vars:
+            if g is None:
+                continue
+            expanded_g = tf.expand_dims(g, 0)
+            grads.append(expanded_g)
+
+        if len(grads) == 0:
+            average_grads.append((None, v))
+            continue
+
+        grad = tf.concat(axis=0, values=grads)
+        grad = tf.reduce_mean(grad, 0)
+
+        v = grad_and_vars[0][1]
+        grad_and_var = (grad, v)
+        average_grads.append(grad_and_var)
+    return average_grads
+
+
 def main():
     args = get_arguments()
+    # override the hparams
+    if args.hparams is not None:
+        hparams.parse(args.hparams)
+    if not hparams.gc_enable:
+        hparams.global_cardinality = None
+        hparams.global_channel = None
+    print(hparams_debug_string())
 
     try:
         directories = validate_directories(args)
     except ValueError as e:
         print("Some arguments are wrong:")
-        print(str(e))
         return
+
     logdir = directories['logdir']
-    logdir_root = directories['logdir_root']
     restore_from = directories['restore_from']
 
-    # Even if we restored the model, we will treat it as new training
-    # if the trained model is written into an arbitrary location.
     is_overwritten_training = logdir != restore_from
-
-    with open(args.wavenet_params, 'r') as f:
-        wavenet_params = json.load(f)
-
-    # Create coordinator.
 
     coord = tf.train.Coordinator()
 
-    sess = tf.Session(config=tf.ConfigProto(log_device_placement=False))
-    # Load raw waveform from VCTK corpus.
-    with tf.name_scope('create_inputs'):
-        gc_enabled = args.gc_channels is not None
-        reader = SkeletonReader(
-            args.data_dir,
-            coord,
-            gc_enabled=gc_enabled,
-            receptive_field=WaveNetModel.calculate_receptive_field(wavenet_params["filter_width"],
-                                                                   wavenet_params["dilations"]),
-            input_channels=wavenet_params["input_channels"],
-            sample_size=args.sample_size)
-        #print ('batch_size:{0}'.format(args.batch_size))
-        #skeleton_batch: batch_sizes x (receptive field+sample_size) x skeleton_channels
-        skeleton_batch = reader.dequeue(args.batch_size)
-        #print('skeleton_batch shape:')
-        print_node = tf.Print(skeleton_batch, [tf.size(skeleton_batch)])
-        if gc_enabled:
-            gc_id_batch = reader.dequeue_gc(args.batch_size)
-        else:
-            gc_id_batch = None
-        #sess.run(print_node)
-    # Create network.
+    with tf.name_scope('create_input'):
+        reader = DataFeeder(
+            metadata_filename=args.train_txt,
+            coord=coord,
+            receptive_field=WaveNetModel.calculate_receptive_field(
+                hparams.filter_width,
+                hparams.dilations,
+                hparams.scalar_input,
+                hparams.initial_filter_width
+            ),
+            gc_enable=hparams.gc_enable,
+            sample_size=args.sample_size,
+            npy_dataroot=hparams.NPY_DATAROOT,
+            num_mels=hparams.num_mels,
+            speaker_id=args.speaker_id
+        )
+
     net = WaveNetModel(
         batch_size=args.batch_size,
-        dilations=wavenet_params["dilations"],
-        filter_width=wavenet_params["filter_width"],
-        residual_channels=wavenet_params["residual_channels"],
-        input_channels=wavenet_params["input_channels"],
-        output_channels=wavenet_params["output_channels"],
-        dilation_channels=wavenet_params["dilation_channels"],
-        skip_channels=wavenet_params["skip_channels"],
-        use_biases=wavenet_params["use_biases"],
+        dilations=hparams.dilations,
+        filter_width=hparams.filter_width,
+        residual_channels=hparams.residual_channels,
+        dilation_channels=hparams.dilation_channels,
+        skip_channels=hparams.skip_channels,
+        quantization_channels=hparams.quantization_channels,
+        use_biases=hparams.use_biases,
+        scalar_input=hparams.scalar_input,
+        initial_filter_width=hparams.initial_filter_width,
         histograms=args.histograms,
-        global_condition_channels=args.gc_channels)
+        local_condition_channel=hparams.num_mels,
+        upsample_conditional_features=hparams.upsample_conditional_features,
+        upsample_factor=hparams.upsample_factor,
+        global_cardinality=hparams.global_cardinality,
+        global_channel=hparams.global_channel
+    )
 
     if args.l2_regularization_strength == 0:
         args.l2_regularization_strength = None
-    loss = net.loss(input_batch=skeleton_batch,
-                    global_condition_batch=gc_id_batch,
-                    l2_regularization_strength=args.l2_regularization_strength)
-    optimizer = optimizer_factory[args.optimizer](
-                    learning_rate=args.learning_rate,
-                    momentum=args.momentum, epsilon=args.epsilon)
+
     trainable = tf.trainable_variables()
-    total_parameters = 0
-    for variable in trainable:
-        shape = variable.get_shape()
-        variable_parameters = 1
-        for dim in shape:
-            variable_parameters *= dim.value
-        total_parameters += variable_parameters
-    print('total number of parameters: {0}'.format(total_parameters))
-    optim = optimizer.minimize(loss, var_list=trainable)
 
-    # Set up logging for TensorBoard.
-    writer = tf.train.SummaryWriter(logdir)
-    writer.add_graph(tf.get_default_graph())
-    run_metadata = tf.RunMetadata()
-    summaries = tf.merge_all_summaries()
+    # get global step
+    global_step = tf.get_variable(
+        'global_step', [],
+        initializer=tf.constant_initializer(0), trainable=False)
 
-    # Set up session
-    #sess = tf.Session(config=tf.ConfigProto(log_device_placement=False))
-    init = tf.initialize_all_variables()
+    # decay learning rate
+    # Calculate the learning rate schedule.
+    decay_steps = hparams.NUM_STEPS_RATIO_PER_DECAY * args.num_steps
+    # Decay the learning rate exponentially based on the number of steps.
+    lr = tf.train.exponential_decay(args.learning_rate,
+                                    global_step,
+                                    decay_steps,
+                                    hparams.LEARNING_RATE_DECAY_FACTOR,
+                                    staircase=True)
+
+    optimizer = optimizer_factory[args.optimizer](
+        learning_rate=lr,
+        momentum=args.momentum)
+
+    mul_batch_size = args.batch_size*args.num_gpus
+    if hparams.gc_enable:
+        audio_batch, lc_batch, gc_batch = reader.dequeue(mul_batch_size)
+    else:
+        audio_batch, lc_batch = reader.dequeue(mul_batch_size)
+        gc_batch = None
+
+    split_audio_batch = tf.split(value=audio_batch, num_or_size_splits=args.num_gpus, axis=0)
+    split_lc_batch = tf.split(value=lc_batch, num_or_size_splits=args.num_gpus, axis=0)
+    if hparams.gc_enable:
+        split_gc_batch = tf.split(value=gc_batch, num_or_size_splits=args.num_gpus, axis=0)
+    else:
+        split_gc_batch = [None for _ in range(args.num_gpus)]
+
+    # support multi gpu train
+    tower_grads = []
+    tower_losses = []
+    with tf.variable_scope(tf.get_variable_scope()):
+        for i in range(args.num_gpus):
+            with tf.device('/gpu:{}'.format(i)):
+                with tf.name_scope('losstower_{}'.format(i)) as scope:
+                    loss = net.loss(input_batch=split_audio_batch[i],
+                                    local_condition=split_lc_batch[i],
+                                    global_condition=split_gc_batch[i],
+                                    l2_regularization_strength=args.l2_regularization_strength, name=scope)
+                    tf.get_variable_scope().reuse_variables()
+                    tower_losses.append(loss)
+                    grad_vars = optimizer.compute_gradients(loss, var_list=trainable)
+                    tower_grads.append(grad_vars)
+    if args.num_gpus == 1:
+        optim = optimizer.minimize(loss, var_list=trainable, global_step=global_step)
+    else:
+        loss = tf.reduce_mean(tower_losses)
+        avg_grad = average_gradients(tower_grads)
+        optim = optimizer.apply_gradients(avg_grad, global_step=global_step)
+
+    # Track the moving averages of all trainable variables.
+    variable_averages = tf.train.ExponentialMovingAverage(
+        hparams.MOVING_AVERAGE_DECAY, global_step)
+    variables_averages_op = variable_averages.apply(tf.trainable_variables())
+
+    train_op = tf.group(optim, variables_averages_op)
+
+    # init the sess
+    #tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
+    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.8)
+    sess = tf.Session(config=tf.ConfigProto(log_device_placement=False, allow_soft_placement=True,
+                                            gpu_options=gpu_options))#tf.GPUOptions(allow_growth=True)
+    init = tf.global_variables_initializer()
     sess.run(init)
 
-    # Saver for storing checkpoints of the model.
-    saver = tf.train.Saver(var_list=tf.trainable_variables())
+    saver = tf.train.Saver(var_list=tf.trainable_variables(), max_to_keep=args.max_checkpoints)
 
     try:
-        saved_global_step = load(saver, sess, restore_from)
+        saved_global_step, sess = load(saver, sess, restore_from)
         if is_overwritten_training or saved_global_step is None:
-            # The first training step will be saved_global_step + 1,
-            # therefore we put -1 here for new or overwritten trainings.
-            saved_global_step = -1
-
+            saved_global_step = 0
     except:
         print("Something went wrong while restoring checkpoint. "
               "We will terminate training to avoid accidentally overwriting "
@@ -287,41 +341,29 @@ def main():
     reader.start_threads(sess)
 
     step = None
-    try:
-        last_saved_step = saved_global_step
-        for step in range(saved_global_step + 1, args.num_steps):
-            start_time = time.time()
-            if args.store_metadata and step % 50 == 0:
-                # Slow run that stores extra information for debugging.
-                print('Storing metadata')
-                run_options = tf.RunOptions(
-                    trace_level=tf.RunOptions.FULL_TRACE)
-                summary, loss_value, _ = sess.run(
-                    [summaries, loss, optim],
-                    options=run_options,
-                    run_metadata=run_metadata)
-                writer.add_summary(summary, step)
-                writer.add_run_metadata(run_metadata,
-                                        'step_{:04d}'.format(step))
-                tl = timeline.Timeline(run_metadata.step_stats)
-                timeline_path = os.path.join(logdir, 'timeline.trace')
-                with open(timeline_path, 'w') as f:
-                    f.write(tl.generate_chrome_trace_format(show_memory=True))
-            else:
-                summary, loss_value, _ = sess.run([summaries, loss, optim])
-                writer.add_summary(summary, step)
+    last_saved_step = saved_global_step
 
-            duration = time.time() - start_time
-            print('step {:d} - loss = {:.3f}, ({:.3f} sec/step)'
-                  .format(step, loss_value, duration))
+    try:
+        print_loss = 0.
+        start_time = time.time()
+        for step in range(saved_global_step, args.num_steps):
+
+            loss_value, _ = sess.run([loss, train_op])
+
+            print_loss += loss_value
+
+            if step % PRINT_LOSS_EVERY == 0:
+                duration = time.time() - start_time
+                print('step {:d} - loss = {:.3f}, ({:.3f} sec/step)'.format(
+                    step, print_loss/PRINT_LOSS_EVERY, duration/PRINT_LOSS_EVERY))
+                start_time = time.time()
+                print_loss = 0.
 
             if step % args.checkpoint_every == 0:
                 save(saver, sess, logdir, step)
                 last_saved_step = step
 
     except KeyboardInterrupt:
-        # Introduce a line break after ^C is displayed so save message
-        # is on its own line.
         print()
     finally:
         if step > last_saved_step:
@@ -332,3 +374,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
