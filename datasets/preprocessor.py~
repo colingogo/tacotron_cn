@@ -29,7 +29,6 @@ def build_from_path(input_dir, out_dir, n_jobs=4, tqdm=lambda x: x):
 			parts = line.strip().split('<------>')
 			wav_path = os.path.join(input_dir, 'wavs', '{}.wav'.format(parts[0]))
 			text = parts[1]
-                        text = ch2p(text)
 			futures.append(executor.submit(partial(_process_utterance, out_dir, index, wav_path, text)))
 			index += 1
 	return [future.result() for future in tqdm(futures)]
