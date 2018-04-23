@@ -1,15 +1,16 @@
+#!/usr/bin/env python
+# -*- coding:utf-8 -*-
+from utils import audio
+import numpy as np
+import os
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
-from utils import audio
-import os
-import numpy as np
-from chinese2pinyin import ch2p
 
 
-def build_from_path(input_dir, out_dir, n_jobs=4, tqdm=lambda x: x):
+def build_from_path(input_dir="/media/btows/SDB/tts_dataset/train_dataset/sangzhujuan",
+                    out_dir="/media/btows/SDB/tts_dataset/train_dataset/mels1", n_jobs=4, tqdm=lambda x: x):
     """
     Preprocesses the Lj speech dataset from a gven input path to a given output directory
-
     Args:
         - in_dir: input directory that contains the files to prerocess
         - out_dir: output drectory of the preprocessed Lj dataset
@@ -29,32 +30,12 @@ def build_from_path(input_dir, out_dir, n_jobs=4, tqdm=lambda x: x):
         for line in f:
             parts = line.strip().split('<------>')
             wav_path = os.path.join(input_dir, 'wavs', '{}.wav'.format(parts[0]))
-            text1 = parts[1]
-            text = ch2p(text1)
-            print(str(text1) + "====>" + str(text))
-            futures.append(executor.submit(partial(_process_utterance, out_dir, index, wav_path, text)))
+            futures.append(executor.submit(partial(_process_utterance, out_dir, parts[0], wav_path)))
             index += 1
     return [future.result() for future in tqdm(futures)]
 
 
-def _process_utterance(out_dir, index, wav_path, text):
-    """
-    Preprocesses a single utterance wav/text pair
-
-    this writes the mel scale spectogram to disk and return a tuple to write
-    to the train.txt file
-
-    Args:
-        - out-dir: the directory to write the spectograms into
-        - index: the numeric index to use in the spectogram filename
-        - wav_path: path to the audio file containing the speech input
-        - text: text spoken in the input audio file
-
-    Returns:
-        - A tuple: (mel_filename, n_frames, text)
-    """
-
-    # Load the audio as numpy array
+def _process_utterance(out_dir, filename, wav_path):
     wav = audio.load_wav(wav_path)
 
     # Compute the mel scale spectrogram from the wav
@@ -62,8 +43,12 @@ def _process_utterance(out_dir, index, wav_path, text):
     n_frames = mel_spectrogram.shape[1]
 
     # Write the spectrogram to disk
-    mel_filename = 'ljspeech-mel-{:05d}.npy'.format(index)
+    mel_filename = str(filename) + ".npy"
     np.save(os.path.join(out_dir, mel_filename), mel_spectrogram.T, allow_pickle=False)
 
     # Return a tuple describing this training example
-    return (mel_filename, n_frames, text)
+    return (mel_filename, n_frames)
+
+
+if __name__ == "__main__":
+    build_from_path()

@@ -13,6 +13,7 @@ def orthogonal_initializer(scale=1.0):
         q = u if u.shape == flat_shape else v
         q = q.reshape(shape)
         return tf.constant(scale * q[:shape[0], :shape[1]], dtype=tf.float32)
+
     return _initializer
 
 
@@ -21,16 +22,16 @@ class ZoneoutLSTMCell(RNNCell):
     """
 
     def __init__(self, num_units, is_training, input_size=None,
-         use_peepholes=False, cell_clip=None,
-         #initializer=orthogonal_initializer(),
-         initializer=tf.contrib.layers.xavier_initializer(),
-         num_proj=None, proj_clip=None, ext_proj=None,
-         forget_bias=1.0,
-         state_is_tuple=True,
-         activation=tf.tanh,
-         zoneout_factor_cell=0.0,
-         zoneout_factor_output=0.0,
-         reuse=None):
+                 use_peepholes=False, cell_clip=None,
+                 # initializer=orthogonal_initializer(),
+                 initializer=tf.contrib.layers.xavier_initializer(),
+                 num_proj=None, proj_clip=None, ext_proj=None,
+                 forget_bias=1.0,
+                 state_is_tuple=True,
+                 activation=tf.tanh,
+                 zoneout_factor_cell=0.0,
+                 zoneout_factor_output=0.0,
+                 reuse=None):
         """Initialize the parameters for an LSTM cell.
         Args:
           num_units: int, The number of units in the LSTM cell.
@@ -147,7 +148,7 @@ class ZoneoutLSTMCell(RNNCell):
                 binary_mask_cell = tf.floor(random_tensor_cell)
                 # 0 <-> 1 swap
                 binary_mask_cell_complement = tf.ones(tf.shape(c_prev)) \
-                    - binary_mask_cell
+                                              - binary_mask_cell
 
                 # make binary mask tensor for output
                 keep_prob_output = tf.convert_to_tensor(
@@ -161,15 +162,15 @@ class ZoneoutLSTMCell(RNNCell):
                 binary_mask_output = tf.floor(random_tensor_output)
                 # 0 <-> 1 swap
                 binary_mask_output_complement = tf.ones(tf.shape(h_prev)) \
-                    - binary_mask_output
+                                                - binary_mask_output
 
             # apply zoneout for cell
             if self.use_peepholes:
                 c_temp = c_prev * \
-                    tf.sigmoid(f + self.forget_bias +
-                               w_f_diag * c_prev) + \
-                    tf.sigmoid(i + w_i_diag * c_prev) * \
-                    self.activation(j)
+                         tf.sigmoid(f + self.forget_bias +
+                                    w_f_diag * c_prev) + \
+                         tf.sigmoid(i + w_i_diag * c_prev) * \
+                         self.activation(j)
                 if self.is_training and self.zoneout_factor_cell > 0.0:
                     c = binary_mask_cell * c_prev + \
                         binary_mask_cell_complement * c_temp
@@ -177,7 +178,7 @@ class ZoneoutLSTMCell(RNNCell):
                     c = c_temp
             else:
                 c_temp = c_prev * tf.sigmoid(f + self.forget_bias) + \
-                    tf.sigmoid(i) * self.activation(j)
+                         tf.sigmoid(i) * self.activation(j)
                 if self.is_training and self.zoneout_factor_cell > 0.0:
                     c = binary_mask_cell * c_prev + \
                         binary_mask_cell_complement * c_temp

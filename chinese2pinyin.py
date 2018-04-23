@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from utils import atc
+import atc
 from pypinyin import lazy_pinyin, load_phrases_dict
 import pypinyin
 import json
@@ -18,7 +18,8 @@ alpha_pronuce = {"A": "ei", "B": "bii", "C": "cii", "D": "dii", "E": "ii", "F": 
 alpha_pronuce = {"A": "ei ", "B": "bii ", "C": "sii ", "D": "dii ", "E": "ii ", "F": "ef ", "G": "dji ", "H": "eich ",
                  "I": "ai ", "J": "jei ", "K": "kei ", "L": "el ", "M": "em ", "N": "en ",
                  "O": "eo ", "P": "pii ", "Q": "kiu ", "R": "aa ", "S": "es ", "T": "tii ", "U": "iu ", "V": "vii ",
-                 "W": "dabliu ", "X ": "eiks ", "Y": "wai ", "Z": "zii "}
+                 "W": "dabliu ", "X": "eiks ", "Y": "wai ", "Z": "zii "}
+
 
 # PUNCTUATION2 = r'“”（）×"\'()*#'  # 其它符号
 # load_phrases_dict({u'360': [[u'jú'], [u'zǐ']]})
@@ -65,7 +66,7 @@ def ch2p(speech):
         ''''''
         for alpha, pronuce in alpha_pronuce.items():
             text = text.replace(alpha, pronuce)
-        text = text.replace("  "," ")
+        text = text.replace("  ", " ")
         text = text.replace("  ", " ")
 
         return text
